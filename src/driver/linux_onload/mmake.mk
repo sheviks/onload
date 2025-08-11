@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
 # X-SPDX-Copyright-Text: (c) Copyright 2005-2020 Xilinx, Inc.
 ############################
-# 
-# EtherFabric linux kernel drivers 
+#
+# EtherFabric linux kernel drivers
 #
 #	onload_ip
 #
@@ -76,12 +76,12 @@ obj-m := $(IP_TARGET)
 ifeq ($(ARCH),powerpc)
 # RHEL5/PPC requires you to pass this, because by default its userspace
 # is 32-bit, but its kernel was built with a 64-bit compiler!
-EXTRA_CFLAGS+= -m64
+ccflags-y+= -m64
 endif
 
 ifeq ($(ARCH),arm64)
 # HACK: to circumvent build error on newever gcc/kernels on ARM (?)
-EXTRA_CFLAGS+= -Wno-error=discarded-qualifiers
+ccflags-y+= -Wno-error=discarded-qualifiers
 endif
 
 onload-objs  := $(IP_TARGET_SRCS:%.c=%.o)
