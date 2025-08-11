@@ -288,6 +288,7 @@ EFX_HAVE_NET_RPS_H                     file       include/net/rps.h
 EFX_HAVE_IP_TUNNEL_FLAGS_TO_BE16	symbol	ip_tunnel_flags_to_be16	include/net/ip_tunnels.h
 EFX_HAVE_ASSIGN_STR_NO_SRC_ARG      custom
 EFX_HAVE_TRY_LOOKUP_NOPERM		symbol	try_lookup_noperm	include/linux/namei.h
+EFX_HAVE_UDP_TUNNEL_NIC_INFO_MAY_SLEEP	symbol	UDP_TUNNEL_NIC_INFO_MAY_SLEEP	include/net/udp_tunnel.h
 " | grep -E -v -e '^#' -e '^$' | sed 's/[ \t][ \t]*/:/g'
 }
 
