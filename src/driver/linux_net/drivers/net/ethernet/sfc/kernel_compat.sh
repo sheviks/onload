@@ -244,6 +244,7 @@ EFX_HAVE_XSK_NEED_WAKEUP		symbol	xsk_umem_uses_need_wakeup	include/net/xdp_sock.
 EFX_HAVE_COALESCE_PARAMS		member struct_ethtool_ops supported_coalesce_params include/linux/ethtool.h
 EFX_NEED_NETLINK_EXT_ACK		nsymbol	netlink_ext_ack	include/linux/netlink.h
 EFX_HAVE_ETHTOOL_RXFH_PARAM		symbol	ethtool_rxfh_param	include/linux/ethtool.h
+EFX_HAVE_CAP_RSS_CTX_SUPPORTED		symbol	cap_rss_ctx_supported	include/linux/ethtool.h
 EFX_HAVE_XDP_QUERY_PROG			symbol XDP_QUERY_PROG	include/linux/netdevice.h
 EFX_HAVE_XDP_FRAME_SZ			member struct_xdp_buff	frame_sz	include/net/xdp.h
 EFX_NEED_XDP_INIT_BUFF			nsymbol	xdp_init_buff	include/net/xdp.h
