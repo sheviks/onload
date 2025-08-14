@@ -22,6 +22,8 @@
 #endif
 
 #ifdef EFRM_NEED_UNIXCB
+#if !defined(CONFIG_CC_HAS_RANDSTRUCT) || defined(CONFIG_RANDSTRUCT_NONE)
+// __randomize_layout disabled, safe to copy struct
 struct unix_skb_parms {
 	struct pid		*pid;		/* skb credentials	*/
 	kuid_t			uid;
@@ -32,6 +34,10 @@ struct unix_skb_parms {
 #endif
 	u32			consumed;
 } __randomize_layout;
+#else
+// TODO: __randomize_layout enabled, an error here is better than a kernel panic later
+#error "__randomize_layout enabled, manual parsing of struct unix_skb_parms required, see https://github.com/Xilinx-CNS/onload/pull/302#issuecomment-3187667262"
+#endif
 
 #define UNIXCB(skb)	(*(struct unix_skb_parms *)&((skb)->cb))
 #endif
