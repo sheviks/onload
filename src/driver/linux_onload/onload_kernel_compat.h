@@ -115,6 +115,66 @@ static inline int efrm_unregister_netdevice_notifier(struct notifier_block *b)
 #define unregister_netdevice_notifier efrm_unregister_netdevice_notifier
 #endif
 
+static inline struct fown_struct* efrm_file_f_owner(struct file *file)
+{
+#ifdef EFRM_F_OWNER_IS_VAL
+	return &file->f_owner;
+#else
+	/* linux 6.12+ */
+	return file->f_owner;
+#endif
+}
+
+
+static inline int
+oo_copy_file_owner(struct file *file_to, struct file *file_from)
+{
+#ifndef EFRM_F_OWNER_IS_VAL
+  /* linux 6.12 */
+  int rc;
+
+  if( efrm_file_f_owner(file_from) == NULL )
+    return 0;
+
+  rc = file_f_owner_allocate(file_to);
+  if( rc != 0 )
+    return rc;
+#endif
+
+  if(efrm_file_f_owner(file_from)->pid != 0) {
+    rcu_read_lock();
+    __f_setown(file_to, efrm_file_f_owner(file_from)->pid,
+               efrm_file_f_owner(file_from)->pid_type, 1);
+    rcu_read_unlock();
+  }
+  efrm_file_f_owner(file_to)->signum = efrm_file_f_owner(file_from)->signum;
+
+  return 0;
+}
+
+#ifdef EFRM_CLOEXEC_FILES_STRUCT
+/* linux 6.12+ */
+#define efrm_close_on_exec close_on_exec
+#else
+static inline bool efrm_close_on_exec(unsigned int fd,
+				      const struct files_struct *files)
+{
+	return close_on_exec(fd, files_fdtable(files));
+}
+#endif
+
+#ifdef EFRM_HAVE_SKB_RECV_NOBLOCK_PARAM
+static inline struct sk_buff *efrm_skb_recv_datagram(struct sock *sk,
+                                                     unsigned flags,
+                                                     int *err)
+{
+  return skb_recv_datagram(sk, flags, flags & MSG_DONTWAIT ? 1 : 0, err);
+}
+#else
+/* linux 5.19+ */
+#define efrm_skb_recv_datagram skb_recv_datagram
+#endif
+
 #ifdef EFRM_HAVE_TIMER_DELETE_SYNC
 /* linux 6.1+ */
 #define efrm_timer_delete_sync timer_delete_sync

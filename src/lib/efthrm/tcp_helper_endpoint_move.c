@@ -15,6 +15,7 @@
 #include <onload/tcp_helper_fns.h>
 #include <onload/version.h>
 #include <onload/oof_interface.h>
+#include "onload_kernel_compat.h"
 
 #if CI_CFG_ENDPOINT_MOVE
 
@@ -428,13 +429,10 @@ int efab_file_move_to_alien_stack(ci_private_t *priv, ci_netif *alien_ni,
   new_ep->file_ptr = priv->_filp;
 
   /* Copy F_SETOWN_EX, F_SETSIG to the new file */
-#ifdef F_SETOWN_EX
-  rcu_read_lock();
-  __f_setown(old_ep->alien_ref->_filp, priv->_filp->f_owner.pid,
-             priv->_filp->f_owner.pid_type, 1);
-  rcu_read_unlock();
-#endif
-  old_ep->alien_ref->_filp->f_owner.signum = priv->_filp->f_owner.signum;
+  rc = oo_copy_file_owner(old_ep->alien_ref->_filp, priv->_filp);
+  if( rc != 0 )
+    goto fail5;
+
   old_ep->alien_ref->_filp->f_flags |= priv->_filp->f_flags & O_NONBLOCK;
 
   /********* Point of no return  **********/
@@ -557,6 +555,8 @@ int efab_file_move_to_alien_stack(ci_private_t *priv, ci_netif *alien_ni,
                        ci_tcp_state_str(new_s->b.state)));
   return 0;
 
+fail5:
+  fput(old_ep->alien_ref->_filp);
 fail4:
   /* We clear the filters from the new ep.
    * For now, we do not need to re-insert old filters because hw filters
