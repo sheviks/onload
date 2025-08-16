@@ -165,6 +165,7 @@ EFRM_NEED_STRSCPY	nsymbol	strscpy	include/linux/fortify-string.h	include/linux/s
 EFRM_F_OWNER_IS_VAL		memtype	struct_file	f_owner	include/linux/fs.h struct fown_struct
 
 EFRM_CLOEXEC_FILES_STRUCT	symtype	close_on_exec	include/linux/fdtable.h	bool(unsigned int, const struct files_struct *)
+EFRM_HAVE_GET_FILE_RCU_FUNC symtype get_file_rcu include/linux/fs.h struct file*(struct file __rcu **)
 EFRM_HAVE_TIMER_DELETE_SYNC	export	timer_delete_sync	include/linux/timer.h	kernel/time/timer.c
 
 EFRM_HAVE_FOLLOW_PFNMAP_START symbol follow_pfnmap_start include/linux/mm.h
