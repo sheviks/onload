@@ -48,6 +48,7 @@ MODULE_PARM_DESC(phys_mode_gid,
 
 MODULE_AUTHOR("Solarflare Communications");
 MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Driver supporting ef_vi and TCP Direct");
 
 
 /*--------------------------------------------------------------------
