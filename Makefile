@@ -58,14 +58,41 @@ ifeq ($(KPATH),)
   ifeq ($(KARCH),)
   KARCH := $(shell uname -m)
   endif
-  KPATH := /lib/modules/$(KVER)/build
+  # RHEL
+  KPATH := /usr/src/kernels/$(KVER)
+  ifeq ($(wildcard $(KPATH)),)
+    # SUSE
+    KPATH := /usr/src/linux-$(KVER)
+  endif
+  ifeq ($(wildcard $(KPATH)),)
+    # Debian
+    KPATH := /usr/src/linux-headers-$(KVER)
+  endif
+  ifeq ($(wildcard $(KPATH)),)
+    # Symlink from binaries
+    KPATH := /lib/modules/$(KVER)/build
+  endif
+  ifeq ($(wildcard $(KPATH)),)
+    $(error KPATH "$(KPATH)" not found)
+  endif
+else ifneq (,$(wildcard $(dir) $(KPATH)/include/generated/compile.h))
+  KVERARCH := $(subst $\",,$(shell echo 'UTS_RELEASE UTS_MACHINE'|gcc -E -P -include $(KPATH)/include/generated/utsrelease.h -include $(KPATH)/include/generated/compile.h -))
+  ifeq ($(KVERARCH),)
+    $(error Cannot extract kernel info from KPATH "$(KPATH)" - not a built tree?)
+  endif
+  KVER ?= $(firstword $(KVERARCH))
+  KARCH ?= $(lastword $(KVERARCH))
 else
- KVERARCH := $(subst $\",,$(shell echo 'UTS_RELEASE UTS_MACHINE'|gcc -E -P -include $(KPATH)/include/generated/utsrelease.h -include $(KPATH)/include/generated/compile.h -))
- ifeq ($(KVERARCH),)
-   $(error Cannot extract kernel info from KPATH "$(KPATH)" - not a built tree?)
- endif
- KVER ?= $(firstword $(KVERARCH))
- KARCH ?= $(lastword $(KVERARCH))
+  # SLES15 does not include compile.h, so we need another way to determine the
+  # arch we're being asked to build for. If it's the running kernel we can
+  # just ask uname. If not, we give up, as all supported distros should be
+  # providing compile.h anyway.
+  KVER := $(subst $\",,$(shell echo 'UTS_RELEASE'|gcc -E -P -include $(KPATH)/include/generated/utsrelease.h -))
+  ifeq ($(KVER), $(shell uname -r))
+    KARCH := $(shell uname -m)
+  else
+    $(error Cannot determine KARCH info from KPATH "$(KPATH)")
+  endif
 endif
 
 export HAVE_EFCT ?=
@@ -110,7 +137,7 @@ AUTOCOMPAT := $(obj)/src/driver/linux_resource/autocompat.h
 LINUX_RESOURCE := $(src)/src/driver/linux_resource
 $(AUTOCOMPAT): $(LINUX_RESOURCE)/kernel_compat.sh $(LINUX_RESOURCE)/kernel_compat_funcs.sh
 	@mkdir -p $(@D)
-	($< -k $(CURDIR) $(if $(filter 1,$(V)),-v,-q) > $@) || (rm -f $@ && false)
+	($< -k $(realpath $(objtree)) $(if $(filter 1,$(V)),-v,-q) > $@) || (rm -f $@ && false)
 
 mkdirs:
 	@mkdir -p $(obj)/src/lib/efhw
@@ -224,7 +251,7 @@ kernel: modules
 
 modules modules_install: $(OUTMAKEFILES)
 	$(Q)$(MAKE) -C $(KPATH) M=$(KBUILDTOP) \
-		"src=\$$(patsubst $(KBUILDTOP)%,$$PWD%,\$$(obj))" \
+		"src=\$$(patsubst $(KBUILDTOP)%,$$PWD%,\$$(realpath \$$(obj)))" \
 		"SRCPATH=$$PWD/src" \
 		'subdir-ccflags-y=$(subst ','\'',$(ONLOAD_CFLAGS))' \
 		MMAKE_IN_KBUILD=1 MMAKE_USE_KBUILD=1 MMAKE_NO_RULES=1 \
@@ -245,5 +272,19 @@ clean_kernel:
 $(OUTMAKEFILES): $(KBUILDTOP)/%: %
 	$(Q)mkdir -p $(@D)
 	$(Q)ln -sf `realpath '--relative-to=$(@D)' '$<'` $@
+
+# Linux 6.10 build fix: place symlinks to source files into the build directory.
+# See github issue #236.
+DRIVER_BUILD_SUBDIRS_ALL := $(foreach D,$(DRIVER_SUBDIRS),$(KBUILDTOP)/$(D))
+DRIVER_BUILD_SUBDIRS_ALL += $(KBUILDTOP)/src/lib/efthrm
+DRIVER_BUILD_SUBDIRS_ALL += $(KBUILDTOP)/src/lib/efhw
+DRIVER_BUILD_SUBDIRS_ALL += $(KBUILDTOP)/src/lib/efrm
+DRIVER_BUILD_SUBDIRS_ALL += $(KBUILDTOP)/src/lib/kernel_utils
+
+$(OUTMAKEFILES): $(DRIVER_BUILD_SUBDIRS_ALL)
+
+$(DRIVER_BUILD_SUBDIRS_ALL): $(KBUILDTOP)/%: %
+	$(Q)mkdir -p $@
+	$(Q)ln -rsf $(wildcard $</*.[ch]) $@
 
 endif  # ifeq ($(KERNELRELEASE),)
