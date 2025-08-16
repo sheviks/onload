@@ -115,5 +115,11 @@ static inline int efrm_unregister_netdevice_notifier(struct notifier_block *b)
 #define unregister_netdevice_notifier efrm_unregister_netdevice_notifier
 #endif
 
+#ifdef EFRM_HAVE_TIMER_DELETE_SYNC
+/* linux 6.1+ */
+#define efrm_timer_delete_sync timer_delete_sync
+#else
+#define efrm_timer_delete_sync del_timer_sync
+#endif
 
 #endif /* __ONLOAD_KERNEL_COMPAT_H__ */
