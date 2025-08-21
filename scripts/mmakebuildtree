@@ -188,7 +188,7 @@ while [ $# -gt 0 ]; do
     -d)	if [ -z "$2" ]; then usage; fi; dest="$2"; shift;;
     -c|--custom) custom=1; what="--allplatforms"; shift;;
     -b|--build-dir) if [ -z "$2" ]; then usage; fi; builddir="$2";  shift;;
-    --driver) driver=1;;
+    --driver) driver=1; newdriver=1;;
     --newdriver) driver=1; newdriver=1;;
     --gnu|--user) gnu=1;;
     --cc) CC="$2"; shift;;
@@ -272,9 +272,10 @@ fi
   kernel=$(echo "$kernel" | tr '[A-Z]' '[a-z]')
   [ -z "$KVER" ] && KVER=$(uname -r)
   [ -d "$KPATH" ] || {
-    modules="/lib/modules/$KVER"
-    [ -d "${modules}" ] || fail "No kernel modules at '$modules'"
-    KPATH="${modules}/build"
+    KPATH=/usr/src/kernels/$KVER # RHEL
+    [ -d "$KPATH" ] || KPATH=/usr/src/linux-$KVER # SUSE
+    [ -d "$KPATH" ] || KPATH=/usr/src/linux-headers-$KVER # Debian
+    [ -d "$KPATH" ] || KPATH=/lib/modules/$KVER/build # Symlink from binaries
     [ -d "$KPATH" ] || fail "No kernel build at '$KPATH'"
   }
 }
@@ -295,6 +296,7 @@ clean:
 	\$(MAKE) -C ../.. KPATH=$KPATH KBUILDTOP=\$(abspath .) clean_kernel
 .PHONY: all clean
 HERE
+  echo "Build tree made for $PLATFORM as $dest"
   exit 0
 fi
 
