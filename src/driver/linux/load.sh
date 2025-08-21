@@ -339,7 +339,7 @@ donet () {
       houseip=$(ifconfig $houseeth | grep -o "inet addr:[0-9.]\+")
       houseip=${houseip##*:}
       netpf=$(/sbin/ip address show dev "$houseeth"  | grep inet | head -1)
-      netpf=$(echo "$netpf" | egrep -o "/[0-9]+ " | sed 's+[/ ]++g')
+      netpf=$(echo "$netpf" | grep -E -o "/[0-9]+ " | sed 's+[/ ]++g')
       os=`uname -a`
       os=${os// /%20}
       for ethif in $(get_interfaces); do
