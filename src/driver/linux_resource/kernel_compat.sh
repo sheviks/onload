@@ -161,6 +161,7 @@ EFRM_NEED_DEBUGFS_LOOKUP_AND_REMOVE nsymbol debugfs_lookup_and_remove include/li
 EFRM_HAVE_WARN_FLUSHING_SYSTEMWIDE_WQ symbol __warn_flushing_systemwide_wq include/linux/workqueue.h
 
 EFRM_NEED_STRSCPY	nsymbol	strscpy	include/linux/fortify-string.h	include/linux/string.h
+EFRM_HAVE_TIMER_DELETE_SYNC	export	timer_delete_sync	include/linux/timer.h	kernel/time/timer.c
 
 EFRM_HAVE_FOLLOW_PFNMAP_START symbol follow_pfnmap_start include/linux/mm.h
 
