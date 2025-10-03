@@ -269,6 +269,15 @@ oo_hw_filter_set_hwport_common(struct oo_hw_filter* oofilter, int hwport,
   unsigned exclusive_rxq_token = EFHW_PD_NON_EXC_TOKEN;
   int rss_context = -1;
   unsigned stack_id;
+  struct tcp_helper_filter_params params = {
+    .vi_id = &vi_id,
+    .rxq = &rxq,
+    .flags = &insert_flags,
+    .exclusive_rxq_token = &exclusive_rxq_token,
+  };
+  bool is_mcast4 = (oo_filter_spec->type == OO_HW_FILTER_TYPE_IP) &&
+                   (oo_filter_spec->addr.ip.protocol == IPPROTO_UDP) &&
+                   ipv4_is_multicast(oo_filter_spec->addr.ip.daddr[0]);
 
   ci_assert_nequal(oofilter->trs == NULL, oofilter->thc == NULL);
   ci_assert_equal(!!redirect, oofilter->filter_id[hwport] >= 0);
@@ -276,8 +285,7 @@ oo_hw_filter_set_hwport_common(struct oo_hw_filter* oofilter, int hwport,
   if( cluster )
     vi_id = tcp_helper_cluster_vi_base(oofilter->thc, hwport);
   else
-    tcp_helper_get_filter_params(oofilter->trs, hwport, &vi_id, &rxq,
-                                 &insert_flags, &exclusive_rxq_token);
+    tcp_helper_get_filter_params(oofilter->trs, hwport, is_mcast4, &params);
 
   if( vi_id  >= 0 ) {
     int flags = EFX_FILTER_FLAG_RX_SCATTER;
@@ -317,7 +325,10 @@ oo_hw_filter_set_hwport_common(struct oo_hw_filter* oofilter, int hwport,
 
     if( redirect ) {
       ci_assert_ge(oofilter->filter_id[hwport], 0);
-      rc = efrm_filter_redirect(get_client(hwport), oofilter->filter_id[hwport], &spec);
+      rc = efrm_filter_redirect(get_client(hwport),
+                                oofilter->filter_id[hwport], &spec, &rxq,
+                                exclusive_rxq_token,
+                                &oofilter->trs->filter_irqmask, insert_flags);
       if( rc == -ENOENT || rc == -ENODEV ) {
         /* net driver either:
          *  * does not know about our filter, let's better
@@ -327,6 +338,17 @@ oo_hw_filter_set_hwport_common(struct oo_hw_filter* oofilter, int hwport,
         oofilter->filter_id[hwport] = rc;
       }
       else {
+        if( rc >= 0 ) {
+          /* If the redirect succeeded perform any post-add actions */
+          rc = tcp_helper_post_filter_add(oofilter->trs, hwport, &spec, rxq,
+                                          exclusive_rxq_token);
+          if( rc < 0 ) {
+            efrm_filter_remove(get_client(hwport),
+                               oofilter->filter_id[hwport]);
+            EFRM_WARN("%s: Post add failed for redirected filter (hwport %x "
+                      "rxq %d rc %d", __func__, hwport, rxq, rc);
+          }
+        }
         /* Moving filter either:
          *  * succeeded, or
          *  * failed
@@ -354,26 +376,15 @@ oo_hw_filter_set_hwport_common(struct oo_hw_filter* oofilter, int hwport,
        * stacks, therefore is fundamentally at odds with RSS. This could (like
        * everything) change in the future, but it's difficult to predict in
        * what way. */
+      if( !cluster ) {
+        rc = tcp_helper_post_filter_add(oofilter->trs, hwport, &spec, rxq,
+                                        exclusive_rxq_token);
+        if( rc < 0 )
+          efrm_filter_remove(get_client(hwport), oofilter->filter_id[hwport]);
+      }
 #if ! CI_CFG_ENDPOINT_MOVE
       ci_assert_equal(cluster, 0);
-#else
-      if( cluster )
-        rc = tcp_helper_cluster_post_filter_add(oofilter->thc, hwport, &spec,
-                                                rxq, replace);
-      else
 #endif
-        rc = tcp_helper_post_filter_add(oofilter->trs, hwport, &spec, rxq,
-                                        replace);
-      if( rc < 0 ) {
-        if( ! replace )
-          efrm_filter_remove(get_client(hwport), oofilter->filter_id[hwport]);
-        /* We ideally want to restore replaced filters too, but we're not
-         * keeping enough info to know how. In any case, we currently have no
-         * hardware on which this matters (no hardware uses both a non-trivial
-         * tcp_helper_post_filter_add() and the replace option), so it'd be
-         * untested code. If/when that hardware comes, there are many possible
-         * locations for the solution. */
-      }
     }
   }
   else {

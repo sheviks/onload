@@ -3,8 +3,8 @@
 
 #include "ef_vi_internal.h"
 
-#include <etherfabric/shrub_server.h>
-#include <etherfabric/shrub_shared.h>
+#include <etherfabric/internal/shrub_server.h>
+#include <etherfabric/internal/shrub_shared.h>
 
 #include "shrub_server_sockets.h"
 #include "shrub_connection.h"
@@ -209,7 +209,7 @@ static int server_request_received(struct ef_shrub_server* server,
      * the epoll set */
     goto out_close;
   case EF_SHRUB_REQUEST_QUEUE:
-    rc = server_request_queue(server, connection, request.requests.queue.qid);
+    rc = server_request_queue(server, connection, request.queue.qid);
     if( rc < 0 )
       goto out_close;
 

@@ -2,8 +2,7 @@
 /* X-SPDX-Copyright-Text: (c) Copyright 2025 Advanced Micro Devices, Inc. */
 
 #include "ef_vi_internal.h"
-#include "shrub_client.h"
-
+#include <etherfabric/internal/shrub_client.h>
 #include <etherfabric/internal/shrub_socket.h>
 #include <linux/net.h>
 #include <linux/file.h>
@@ -270,7 +269,7 @@ int ef_shrub_socket_mmap(uint64_t* mapping, void* addr, size_t size,
   struct file* file = (struct file*)file_;
   pgoff_t pgoff = offset >> PAGE_SHIFT;
 
-  if( offset & PAGE_MASK )
+  if( offset & ~PAGE_MASK )
     return -EINVAL;
 
   switch( type ) {

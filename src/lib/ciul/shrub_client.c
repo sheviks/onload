@@ -2,7 +2,7 @@
 /* X-SPDX-Copyright-Text: (c) Copyright 2023 Advanced Micro Devices, Inc. */
 
 #include "ef_vi_internal.h"
-#include "shrub_client.h"
+#include <etherfabric/internal/shrub_client.h>
 #include <etherfabric/internal/shrub_socket.h>
 
 /* Accessors for mapped memory */
@@ -88,6 +88,8 @@ void client_munmap(uint64_t* mappings, uintptr_t* files,
   for( i = 0; i < EF_SHRUB_FD_COUNT; ++i ) {
     if( mappings[i] != 0 )
       ef_shrub_socket_munmap(mappings[i], map_size(metrics, i), i);
+    /* Zero out memory so it doesn't get double freed */
+    mappings[i] = 0;
     ef_shrub_socket_close_file(files[i]);
   }
 }
@@ -140,7 +142,7 @@ int ef_shrub_client_open(struct ef_shrub_client* client,
 
   request.server_version = EF_SHRUB_VERSION;
   request.type = EF_SHRUB_REQUEST_QUEUE;
-  request.requests.queue.qid = qid;
+  request.queue.qid = qid;
   rc = ef_shrub_socket_send(client->socket, &request, sizeof(request));
   if( rc < 0 )
     goto fail_request;
@@ -185,8 +187,6 @@ int ef_shrub_client_acquire_buffer(struct ef_shrub_client* client,
                                    uint32_t* buffer_id,
                                    bool* sentinel)
 {
-
-  ci_dword_t id2;
   struct ef_shrub_client_state* state = get_state(client);
   int i = state->server_fifo_index;
   ef_shrub_buffer_id id = get_server_fifo(client)[i];
@@ -196,9 +196,8 @@ int ef_shrub_client_acquire_buffer(struct ef_shrub_client* client,
   state->server_fifo_index =
     i == state->metrics.server_fifo_size - 1 ? 0 : i + 1;
 
-  id2.u32[0] = id;
-  *buffer_id = CI_DWORD_FIELD(id2, EF_SHRUB_BUFFER_ID);
-  *sentinel = CI_DWORD_FIELD(id2, EF_SHRUB_SENTINEL) == 1;
+  *buffer_id = ef_shrub_buffer_index(id);
+  *sentinel = ef_shrub_buffer_sentinel(id);
   return 0;
 }
 

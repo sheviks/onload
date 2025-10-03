@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <ci/compat.h>
 #include <ci/tools/log.h>
+#include <ci/tools/onload_server.h>
 #include <cplane/cplane.h>
 #include <cplane/create.h>
 #include <cplane/mib.h>
@@ -16,8 +17,9 @@
 #include <etherfabric/efct_vi.h>
 #include <etherfabric/pd.h>
 #include <etherfabric/internal/shrub_socket.h>
-#include <etherfabric/shrub_server.h>
-#include <etherfabric/shrub_shared.h>
+#include <etherfabric/internal/shrub_server.h>
+#include <etherfabric/internal/shrub_shared.h>
+#include <etherfabric/internal/efct_uk_api.h>
 #include <etherfabric/vi.h>
 #include <fcntl.h>
 #include <ftw.h>
@@ -50,6 +52,12 @@ static volatile sig_atomic_t call_shrub_dump = 0;
 #define EF_SHRUB_CONFIG_SOCKET_LOCK_LEN (EF_SHRUB_SOCKET_DIR_LEN + \
                                          sizeof(EF_SHRUB_CONFIG_SOCKET_LOCK))
 
+#define DEV_KMSG "/dev/kmsg"
+#define SERVER_BIN "shrub_controller"
+#define SERVER_NAME "Onload Shrub Server"
+
+static char* shrub_log_prefix;
+
 struct shrub_controller_stats
 {
   uint64_t controller_accept_failures;
@@ -61,8 +69,6 @@ struct shrub_controller_stats
 struct shrub_controller_vi
 {
   ef_vi vi;
-  int n_ev;
-  int i;
   ef_pd pd;
   ef_driver_handle dh;
 };
@@ -107,17 +113,19 @@ static void usage(void)
   fprintf(stderr, "Options:\n");
   fprintf(stderr, "  -d       Enable debug mode\n");
   fprintf(stderr, "  -c       Set controller_id\n");
+  fprintf(stderr, "  -D       Daemonise on startup\n");
+  fprintf(stderr, "  -K       Log to kmsg\n");
 }
 
 static int search_for_existing_server(shrub_controller_config *config,
-                                      cicp_hwport_mask_t new_hw_ports)
+                                      int ifindex)
 {
   shrub_if_config_t *current_interface = config->server_config_head;
   while ( current_interface != NULL ) {
-    if ( current_interface->hw_ports == new_hw_ports ) {
+    if ( current_interface->ifindex == ifindex ) {
       if ( config->debug_mode )
         ci_log("Info: shrub_controller found duplicate shrub_server "
-               "with hw_port %d", new_hw_ports);
+               "with ifindex %d", ifindex);
       current_interface->ref_count++;
       return current_interface->token_id;
     }
@@ -291,12 +299,108 @@ static int create_directory(const char *path)
   return rc;
 }
 
-static int shrub_dump(shrub_controller_config *config, const char *file_name)
+static void shrub_log_to_fd(int fd, char *buf, size_t buflen,
+                            const char* fmt, ...)
+{
+  va_list args;
+  int len;
+
+  va_start(args, fmt);
+  len = vsnprintf(buf, buflen, fmt, args);
+  va_end(args);
+  write(fd, buf, len + 1);
+}
+
+#define SECTION_SEP "---------------------------------------------------------"
+static void shrub_dump_summary_to_fd(int fd, shrub_controller_config *config,
+                                     char *buf, size_t buflen)
+{
+  shrub_log_to_fd(fd, buf, buflen, SECTION_SEP);
+  shrub_log_to_fd(fd, buf, buflen, "\nshrub controller\n");
+  shrub_log_to_fd(fd, buf, buflen, "  name: controller-%d%s\n",
+                  config->controller_id, config->debug_mode ? " (debug)" : "");
+  shrub_log_to_fd(fd, buf, buflen, "  dir: %s\n", config->controller_dir);
+  shrub_log_to_fd(fd, buf, buflen, "  config socket: %s\n",
+                  config->config_socket);
+}
+
+static void shrub_dump_stats_to_fd(int fd, shrub_controller_config *config,
+                                   char *buf, size_t buflen)
+{
+  shrub_log_to_fd(fd, buf, buflen, SECTION_SEP);
+  shrub_log_to_fd(fd, buf, buflen, "\ncontroller statistics:\n");
+  shrub_log_to_fd(fd, buf, buflen, "  client negotiation failures: %lu\n",
+                  config->controller_stats.controller_failed_to_neg_client);
+  shrub_log_to_fd(fd, buf, buflen, "  accept failures: %lu\n",
+                  config->controller_stats.controller_accept_failures);
+  shrub_log_to_fd(fd, buf, buflen, "  response send failures: %lu\n",
+                  config->controller_stats.controller_response_failures);
+  shrub_log_to_fd(fd, buf, buflen, "  incompatible clients detected: %lu\n",
+                  config->controller_stats.controller_incompatible_clients);
+}
+
+static void shrub_dump_server_to_fd(int fd, shrub_if_config_t *server_config,
+                                    char *buf, size_t buflen)
+{
+  struct shrub_controller_vi *svi = &server_config->res;
+  ef_vi *vi = &svi->vi;
+  ef_vi_efct_rxqs *rxqs = &vi->efct_rxqs;
+  ef_vi_efct_rxq_state *rxq_state;
+  int i;
+
+  shrub_log_to_fd(fd, buf, buflen, SECTION_SEP);
+  shrub_log_to_fd(fd, buf, buflen, "\nshrub server\n");
+  shrub_log_to_fd(fd, buf, buflen, "  ifindex: %d hwports: %x\n",
+                  server_config->ifindex, server_config->hw_ports);
+  shrub_log_to_fd(fd, buf, buflen, "  buffer count: %d client count: %d "
+                  "token: %x\n", server_config->buffer_count,
+                  server_config->ref_count, server_config->token_id);
+  if( rxqs->active_qs ) {
+    shrub_log_to_fd(fd, buf, buflen, "  vi: %d active_qs: %x\n",
+                    vi->vi_i, *rxqs->active_qs);
+    for( i = 0; i < EF_VI_MAX_EFCT_RXQS; i++ ) {
+      if( (1ull << i) & *rxqs->active_qs ) {
+        rxq_state = &vi->ep_state->rxq.efct_state[i];
+        shrub_log_to_fd(fd, buf, buflen, "  rxq[%d]: hw: %d\n",
+                        i, rxq_state->qid);
+        shrub_log_to_fd(fd, buf, buflen, "    sbseq: %d free_head: %d "
+                        "fifo_head: %d\n", rxq_state->sbseq,
+                        rxq_state->free_head, rxq_state->fifo_head);
+        shrub_log_to_fd(fd, buf, buflen, "    tail_hw: %d tail_sw: %d "
+                        "count_hw: %d count_sw: %d\n", rxq_state->fifo_tail_hw,
+                        rxq_state->fifo_tail_sw, rxq_state->fifo_count_hw,
+                        rxq_state->fifo_count_sw);
+      }
+    }
+  }
+}
+
+static void shrub_dump_servers_to_fd(int fd, shrub_controller_config *config,
+                                     char *buf, size_t buflen)
+{
+  shrub_if_config_t *server_config = config->server_config_head;
+  while ( server_config != NULL ) {
+    shrub_dump_server_to_fd(fd, server_config, buf, buflen);
+    server_config = server_config->next;
+  }
+}
+
+static void shrub_dump_to_fd(int fd, shrub_controller_config *config,
+                             char *buf, size_t buflen)
+{
+  shrub_dump_summary_to_fd(fd, config, buf, buflen);
+  shrub_dump_servers_to_fd(fd, config, buf, buflen);
+  shrub_dump_stats_to_fd(fd, config, buf, buflen);
+}
+
+#define LOGBUF_SIZE 256
+static int shrub_dump_to_file(shrub_controller_config *config,
+                              const char *file_name)
 {
   char file_path[EF_SHRUB_LOG_LEN];
+  char logbuf[LOGBUF_SIZE];
   int rc = 0;
-  shrub_if_config_t *server_config;
-  FILE *file;
+  int fd;
 
   rc = snprintf(file_path, sizeof(file_path), "%s/%s", config->log_dir,
                 file_name);
@@ -309,44 +413,29 @@ static int shrub_dump(shrub_controller_config *config, const char *file_name)
   if ( !directory_exists(config->log_dir) )
     create_directory(config->log_dir);
 
-  file = fopen(file_path, "w");
-  if ( file == NULL ) {
+  fd = open(file_path, O_WRONLY | O_CREAT, S_IRUSR | S_IRGRP);
+  if ( fd < 0 ) {
     rc = -errno;
     ci_log("Error: shrub_controller was unable "
            "to open a file for shrub dump!");
     return rc;
   }
 
-  fprintf(file, "Shrub Controller State:\n");
-  fprintf(file, "  - Controller Name: controller-%d\n", config->controller_id);
-  fprintf(file, "  - Debug Mode: %s\n", config->debug_mode ? "true" : "false");
-  fprintf(file, "  - Controller Dir: %s\n", config->controller_dir);
-  fprintf(file, "  - Config Socket: %s\n", config->config_socket);
+  shrub_dump_to_fd(fd, config, logbuf, LOGBUF_SIZE);
 
-  fprintf(file, "\nController Statistics:\n");
-  fprintf(file, "  - Client Negotiation Failures: %lu\n",
-          config->controller_stats.controller_failed_to_neg_client);
-  fprintf(file, "  - Accept Failures: %lu\n",
-          config->controller_stats.controller_accept_failures);
-  fprintf(file, "  - Response Send Failures: %lu\n",
-          config->controller_stats.controller_response_failures);
-  fprintf(file, "  - Incompatible clients detected: %lu\n",
-          config->controller_stats.controller_incompatible_clients);
-
-
-  server_config = config->server_config_head;
-  while ( server_config != NULL ) {
-    fprintf(file, "\nShrub If Config Details:\n");
-    fprintf(file, "  - Token ID: %d\n", server_config->token_id);
-    fprintf(file, "  - Buffer Count: %d\n", server_config->buffer_count);
-    fprintf(file, "  - Ifindex: %d\n", server_config->ifindex);
-    fprintf(file, "  - Hwports: %u\n", server_config->hw_ports);
-    fprintf(file, "  - Clients %d\n", server_config->ref_count);
-    server_config = server_config->next;
-  }
-
-  fclose(file);
+  close(fd);
   return rc;
+}
+
+static int shrub_dump(shrub_controller_config *config, int fd, size_t bufsize)
+{
+  char *buf = malloc(bufsize);
+  if( !buf )
+    return -ENOMEM;
+
+  shrub_dump_to_fd(fd, config, buf, bufsize);
+  free(buf);
+  return 0;
 }
 
 static int create_onload_config_socket(const char *socket_path, uintptr_t* config_socket_fd, int epoll_fd)
@@ -368,7 +457,10 @@ static int create_onload_config_socket(const char *socket_path, uintptr_t* confi
     goto cleanup_socket;
   }
 
-  rc = ef_shrub_socket_listen(*config_socket_fd, 5);
+  /* We have a connection per-interface per-client. Onload clients will use
+   * all interfaces by default, and it's reasonable that many apps are starting
+   * up at once, so we need a generous backlog. */
+  rc = ef_shrub_socket_listen(*config_socket_fd, 2048);
   if ( rc < 0 ) {
     ci_log("Error: shrub_controller onload socket listen failed");
     goto cleanup_socket;
@@ -394,7 +486,7 @@ static int process_create_command(shrub_controller_config *config,
                                   cicp_hwport_mask_t hw_port, int ifindex,
                                   uint32_t buffer_count, uintptr_t client_fd)
 {
-  int rc = search_for_existing_server(config, hw_port);
+  int rc = search_for_existing_server(config, ifindex);
 
   /* Either rc is -1 and the cplane can't recognise the intf or we have a
      pre-existing shrub_token/server */
@@ -440,7 +532,7 @@ static int poll_socket(shrub_controller_config *config)
   const int max_events = 1;
   uint32_t buffer_count = EF_SHRUB_DEFAULT_BUFFER_COUNT;
   cicp_hwport_mask_t hwport_mask = 0xffffffff;
-  shrub_controller_request_t request;
+  struct ef_shrub_controller_request request;
   int ifindex = -1;
   struct epoll_event events[max_events];
   int response_status = 0;
@@ -465,8 +557,8 @@ static int poll_socket(shrub_controller_config *config)
         if ( request.controller_version != EF_SHRUB_VERSION ) {
           if ( config->debug_mode ) {
             ci_log("Error: shrub_controller being called from an "
-                   "incompatible client! request version %d, "
-                   "expected version %d ",
+                   "incompatible client! request version %" PRIu64
+                   ", expected version %d ",
                    request.controller_version, EF_SHRUB_VERSION);
           }
           response_status = SHRUB_ERR_INCOMPATIBLE_VERSION;
@@ -497,13 +589,16 @@ static int poll_socket(shrub_controller_config *config)
               config, hwport_mask, ifindex, buffer_count, client_fd
             );
             break;
-          case EF_SHRUB_CONTROLLER_DUMP:
-            shrub_dump(config, request.dump.file_name);
+          case EF_SHRUB_CONTROLLER_DUMP_TO_FILE:
+            shrub_dump_to_file(config, request.dump.file_name);
+            break;
+          case EF_SHRUB_CONTROLLER_SHRUB_DUMP:
+            shrub_dump(config, client_fd, request.shrub_dump.logbuf_size);
             break;
           default:
             if ( config->debug_mode ) {
               ci_log("Info: shrub_controller: An unknown command was passed via "
-                    "the config socket, command %d", request.command);
+                    "the config socket, command %" PRIu64, request.command);
             }
             response_status = -1;
             break;
@@ -580,7 +675,7 @@ static int reactor_loop(shrub_controller_config *config)
     }
     poll_socket(config);
     if ( call_shrub_dump == 1 ) {
-      shrub_dump(config, "controller-signal.dump");
+      shrub_dump_to_file(config, "controller-signal.dump");
       call_shrub_dump = 0;
     }
   }
@@ -853,13 +948,29 @@ static void controller_cplane_disconnect(shrub_controller_config *config)
 int main(int argc, char *argv[])
 {
   int rc = 0;
+  bool daemonise = false;
+  bool log_to_kern = false;
+  struct stat stat;
   int option;
   shrub_controller_config config = {0};
   config.config_socket_fd = INVALID_SOCKET_FD;
   config.interface_token = 1;
   config.controller_id = 0;
 
-  while ( (option = getopt(argc, argv, "dc:")) != -1 ) {
+  /* Set sutable prefix */
+  ci_server_set_log_prefix(&shrub_log_prefix, SERVER_BIN);
+
+  /* Ensure that early errors are not lost */
+  if( fstat(STDOUT_FILENO, &stat) != 0 ) {
+    int fd = open(DEV_KMSG, O_WRONLY);
+    if( fd != STDERR_FILENO ) {
+      dup2(fd, STDERR_FILENO);
+      /* Do not check the return code from dup2, as cannot log errors anyway.
+       * Maybe daemonise() will have more luck, let it check for problems. */
+    }
+  }
+
+  while ( (option = getopt(argc, argv, "dc:DK")) != -1 ) {
     switch (option)
     {
     case 'd':
@@ -869,11 +980,21 @@ int main(int argc, char *argv[])
     case 'c':
       config.controller_id = atoi(optarg);
       break;
+    case 'D':
+      daemonise = true;
+      break;
+    case 'K':
+      log_to_kern = true;
+      break;
     default:
       usage();
       return EXIT_FAILURE;
     }
   }
+
+  if( daemonise )
+    ci_server_daemonise(log_to_kern, &shrub_log_prefix, SERVER_NAME,
+                        SERVER_BIN);
 
   controller_init_signals();
   rc = controller_init_paths(&config);

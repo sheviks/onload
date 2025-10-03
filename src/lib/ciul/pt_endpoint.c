@@ -23,8 +23,8 @@
 #include <stdio.h>
 #include <net/if.h>
 
-#include <etherfabric/shrub_shared.h>
-#include <etherfabric/shrub_adapter.h>
+#include <etherfabric/internal/shrub_shared.h>
+#include <etherfabric/internal/shrub_adapter.h>
 
 #define CTPIO_MMAP_LEN CI_PAGE_SIZE
 
@@ -376,7 +376,7 @@ static void ef_vi_set_intf_ver(char* intf_ver, size_t len)
    * It'd also be possible to enhance the checksum computation to be smarter
    * (e.g. by ignoring comments, etc.).
    */
-  if( strcmp(EFCH_INTF_VER, "489573b457a3d80fbaa334358635fe14") ) {
+  if( strcmp(EFCH_INTF_VER, "710ea14b6eee9a53a1ae61915a385ed9") ) {
     fprintf(stderr, "ef_vi: ERROR: char interface has changed to %s\n",
             EFCH_INTF_VER);
     abort();
@@ -490,7 +490,7 @@ int __ef_vi_alloc(ef_vi* vi, ef_driver_handle vi_dh,
   if( (s = getenv("EF_SHRUB_CONTROLLER")) ) {
     shrub_controller_id = atoi(s);
   } else {
-    shrub_controller_id = -1;
+    shrub_controller_id = EF_SHRUB_NO_SHRUB;
   }
 
   if( (s = getenv("EF_SHRUB_BUFFER_COUNT")) ) {
@@ -653,8 +653,8 @@ int __ef_vi_alloc(ef_vi* vi, ef_driver_handle vi_dh,
     else if ( ra.u.vi_out.nic_arch == EFHW_ARCH_EF10CT ) {
       rc = efct_ubufs_init(vi, pd, pd_or_vi_set_dh);
       if ( rc == 0 && shrub_controller_id >= 0 ) {
-        rc = shrub_adapter_send_ifname(
-          shrub_adapter_send_request,
+        rc = ef_shrub_adapter_send_ifname(
+          ef_shrub_adapter_send_request,
           shrub_controller_id,
           pd->pd_intf_name,
           shrub_buffer_count);

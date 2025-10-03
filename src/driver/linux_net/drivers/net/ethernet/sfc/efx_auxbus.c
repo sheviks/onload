@@ -516,13 +516,25 @@ static int efx_auxbus_filter_get_block(struct efx_nic *efx,
 	return rc;
 }
 
-static int efx_auxbus_filter_set_block(struct efx_nic *efx,
+static int efx_auxbus_filter_set_block(struct efx_auxdev_client *handle,
 				       enum efx_filter_block_kernel_type type,
 				       bool should_block)
 {
+	struct efx_probe_data *pd;
+	struct efx_nic *efx;
 	int rc = 0;
 
-	if (!efx || type < 0 || type >= EFX_FILTER_BLOCK_KERNEL_MAX)
+	if (!handle)
+		return -EINVAL;
+	if (!client_supports_filters(handle))
+		return -EOPNOTSUPP;
+
+	pd = cdev_to_probe_data(handle);
+	if (!pd)
+		return -ENODEV;
+	efx = &pd->efx;
+
+	if (type < 0 || type >= EFX_FILTER_BLOCK_KERNEL_MAX)
 		return -EINVAL;
 
 	mutex_lock(&efx->block_kernel_mutex);
@@ -748,18 +760,10 @@ static int efx_auxbus_set_param(struct efx_auxdev_client *handle,
 				enum efx_auxiliary_param p,
 				union efx_auxiliary_param_value *arg)
 {
-	struct efx_probe_data *pd;
-	struct efx_nic *efx;
 	int rc = 0;
 
 	if (!handle || !arg)
 		return -EINVAL;
-
-	pd = cdev_to_probe_data(handle);
-	if (!pd)
-		return -ENODEV;
-
-	efx = &pd->efx;
 
 	switch (p) {
 	case EFX_NETDEV:
@@ -780,18 +784,12 @@ static int efx_auxbus_set_param(struct efx_auxdev_client *handle,
 		handle->driver_data = arg->driver_data;
 		break;
 	case EFX_PARAM_FILTER_BLOCK_KERNEL_UCAST:
-		if (!client_supports_filters(handle))
-			return -EOPNOTSUPP;
-
-		rc = efx_auxbus_filter_set_block(efx,
+		rc = efx_auxbus_filter_set_block(handle,
 						 EFX_FILTER_BLOCK_KERNEL_UCAST,
 						 arg->b);
 		break;
 	case EFX_PARAM_FILTER_BLOCK_KERNEL_MCAST:
-		if (!client_supports_filters(handle))
-			return -EOPNOTSUPP;
-
-		rc = efx_auxbus_filter_set_block(efx,
+		rc = efx_auxbus_filter_set_block(handle,
 						 EFX_FILTER_BLOCK_KERNEL_MCAST,
 						 arg->b);
 		break;
@@ -1037,6 +1035,7 @@ static const struct efx_auxdev_onload_ops aux_onload_devops = {
 	.vport_new = efx_auxbus_vport_new,
 	.vport_free = efx_auxbus_vport_free,
 	.vport_id_get = efx_auxbus_vport_id_get,
+	.filter_set_block = efx_auxbus_filter_set_block,
 };
 
 #if !defined(EFX_USE_KCOMPAT) || defined(EFX_HAVE_XARRAY)
@@ -1250,6 +1249,25 @@ static const struct efx_auxdev_llct_ops aux_llct_devops = {
 	.rxq_free = efx_auxbus_rxq_free,
 };
 
+static void efx_auxbus_handle_client_reset(struct efx_client *client,
+					   struct efx_auxdev_event *event)
+{
+	struct efx_auxdev_client *cdev = &client->auxiliary_info;
+
+	if (event->value == EFX_IN_RESET) {
+		/* If the NIC has reset then all of the queues we allocated
+		 * will be gone, and it is the responsibility of the auxbus
+		 * client to reallocate any queues it wants post-reset.
+		 */
+		xa_destroy(&cdev->txqs);
+		xa_destroy(&cdev->rxqs);
+		xa_destroy(&cdev->evqs);
+		xa_init(&cdev->txqs);
+		xa_init(&cdev->rxqs);
+		xa_init(&cdev->evqs);
+	}
+}
+
 int efx_auxbus_send_events(struct efx_probe_data *pd,
 			   struct efx_auxdev_event *event)
 {
@@ -1274,6 +1292,9 @@ int efx_auxbus_send_events(struct efx_probe_data *pd,
 
 			if (!client)
 				continue;
+
+			if (event->type == EFX_AUXDEV_EVENT_IN_RESET)
+				efx_auxbus_handle_client_reset(client, event);
 
 			cdev = &client->auxiliary_info;
 			if (!(cdev->events_requested & BIT(event->type)))

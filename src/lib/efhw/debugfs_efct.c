@@ -14,6 +14,7 @@
 
 #include "linux_resource_internal.h"
 #include "debugfs.h"
+#include "efct_filters_internal.h"
 
 
 #ifdef CONFIG_DEBUG_FS
@@ -57,9 +58,12 @@ efct_debugfs_read_exclusive_rxq_mapping(struct seq_file *file, int rxq_n,
   seq_printf(file, "exclusive rxq map: ");
   for( qid = 0; qid < rxq_n; ++qid ) {
     uint32_t excl = fs->exclusive_rxq_mapping[qid];
-    seq_printf(file, "%s%d",
-               qid == 0 ? "" : " ",
-               excl && excl != EFHW_PD_NON_EXC_TOKEN);
+    if( qid % 8 == 0 )
+      seq_printf(file, "\n%3d:", qid);
+    if( excl && excl != EFHW_PD_NON_EXC_TOKEN )
+      seq_printf(file, " %08x", excl);
+    else
+      seq_printf(file, "        -");
   }
   seq_printf(file, "\n");
   return 0;
@@ -79,7 +83,7 @@ static int
 efct_debugfs_read_efct_filter_state(struct seq_file *file, const void *data)
 {
   const struct efhw_nic_efct *efct = data;
-  const struct efct_filter_state *fs = &efct->filter_state;
+  const struct efct_filter_state *fs = efct->filter_state;
 
   return efct_debugfs_read_filter_state(file, efct->rxq_n, fs);
 }
@@ -88,7 +92,7 @@ static int
 efct_debugfs_read_ef10ct_filter_state(struct seq_file *file, const void *data)
 {
   const struct efhw_nic_ef10ct *ef10ct = data;
-  const struct efct_filter_state *fs = &ef10ct->filter_state;
+  const struct efct_filter_state *fs = ef10ct->filter_state;
 
   return efct_debugfs_read_filter_state(file, ef10ct->rxq_n, fs);
 }

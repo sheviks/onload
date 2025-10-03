@@ -2,7 +2,7 @@
 /* SPDX-FileCopyrightText: Copyright (C) 2025, Advanced Micro Devices, Inc. */
 
 /* Functions under test */
-#include <etherfabric/shrub_server.h>
+#include <etherfabric/internal/shrub_server.h>
 
 /* Test infrastructure */
 #include "unit_test.h"
@@ -12,7 +12,7 @@
 #include <string.h>
 
 #include <ci/efch/op_types.h>
-#include <etherfabric/shrub_shared.h>
+#include <etherfabric/internal/shrub_shared.h>
 #include <etherfabric/ef_vi.h>
 
 #include "shrub_queue.h"
@@ -115,7 +115,7 @@ int ef_shrub_server_recv(int fd, void* data, size_t bytes)
   req->type = shrub_request_type;
   switch(shrub_request_type) {
     case EF_SHRUB_REQUEST_QUEUE:
-      req->requests.queue.qid = ++last_qid;
+      req->queue.qid = ++last_qid;
       break;
     default:
       break;

@@ -92,7 +92,7 @@
  **************************************************************************/
 
 #ifdef EFX_NOT_UPSTREAM
-#define EFX_DRIVER_VERSION	"6.1.1.1005"
+#define EFX_DRIVER_VERSION	"6.1.1.1012"
 #endif
 
 #ifdef DEBUG
@@ -151,15 +151,13 @@
 /* Maximum total header length for TSOv2 */
 #define EFX_TSO2_MAX_HDRLEN	208
 
-#if !defined(EFX_NOT_UPSTREAM) || defined(EFX_RX_PAGE_SHARE)
-/* Size of an RX scatter buffer.  Small enough to pack 2 into a 4K page,
+/* Size of an RX scatter buffer. Small enough to pack 2 into a 4K page,
  * and should be a multiple of the cache line size.
  */
 #define EFX_RX_USR_BUF_SIZE	(2048 - 256 - XDP_PACKET_HEADROOM)
-#else
-/* Size of an RX scatter buffer. */
-#define EFX_RX_USR_BUF_SIZE	(PAGE_SIZE - L1_CACHE_BYTES)
-#endif
+
+/* Size of an RX scatter buffer when not page sharing. */
+#define EFX_RX_USR_SHARE_BUF_SIZE	(PAGE_SIZE - 256 - XDP_PACKET_HEADROOM)
 
 /* If possible, we should ensure cache line alignment at start and end
  * of every buffer.  Otherwise, we just need to ensure 4-byte
@@ -1585,6 +1583,7 @@ struct efx_mae;
  *	and must be released by caller after statistics processing/copying
  *	if required.
  * @n_rx_noskb_drops: Count of RX packets dropped due to failure to allocate an skb
+ * @max_evq_over: The maximum EVQ oversubscription found
  *
  * This is stored in the private area of the &struct net_device.
  */
@@ -1715,6 +1714,8 @@ struct efx_nic {
 	unsigned int rx_bufs_per_page;
 	unsigned int rx_pages_per_batch;
 	unsigned int rx_prefix_size;
+	unsigned int rx_buf_page_share;
+	unsigned int rx_max_frags;
 	int rx_packet_hash_offset;
 	int rx_packet_len_offset;
 	int rx_packet_ts_offset;
@@ -1919,6 +1920,7 @@ struct efx_nic {
 	 */
 	struct mutex debugfs_symlink_mutex;
 #endif
+	unsigned int max_evq_over;
 };
 
 #ifdef EFX_NOT_UPSTREAM
