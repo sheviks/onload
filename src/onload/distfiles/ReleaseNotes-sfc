@@ -105,7 +105,6 @@ SWNETLINUX-5910
 ~ Add the 'kernel-modules' capability to the RPM package so that the
   installer can create a Driver Update Disk (DUD) for RHEL installations.
 
-### v6_3_1_1002
 SWNETLINUX-5790
 ~ Support reading longer logs from adapters by using 'devlink health dump'
   (instead of 'diagnose').
